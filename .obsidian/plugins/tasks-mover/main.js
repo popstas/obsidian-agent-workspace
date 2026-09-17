@@ -1,6 +1,9 @@
 'use strict';
 
-const { Plugin, Notice, Menu, MarkdownView, moment } = require('obsidian');
+const {
+  Plugin, Notice, Menu, MarkdownView, moment,
+  SuggestModal, Keymap, prepareFuzzySearch, renderResults,
+} = require('obsidian');
 
 // CodeMirror's fold effect — Obsidian provides @codemirror/* to plugins as
 // externals. Guarded so a missing module degrades gracefully instead of
@@ -273,6 +276,66 @@ function foldDoneInWeek(editor) {
   return effects.length;
 }
 
+// ---- recent-files switcher -------------------------------------------------
+
+// Quick switcher clone that keeps the list in modified-time order: newest file
+// first, always — a query only filters, it never re-ranks (that is the whole
+// point of this modal, so no fuzzy score sorting here).
+class RecentFilesModal extends SuggestModal {
+  constructor(app) {
+    super(app);
+    this.limit = 100;
+    this.setPlaceholder('Recently modified files…');
+    this.setInstructions([
+      { command: '↑↓', purpose: 'navigate' },
+      { command: '↵', purpose: 'open' },
+      { command: 'Mod ↵', purpose: 'open in new tab' },
+      { command: 'esc', purpose: 'dismiss' },
+    ]);
+  }
+
+  // All openable files like the core switcher does, minus the ones excluded in
+  // Settings → Files & Links (here: `files/`), so attachments do not flood the
+  // top of an mtime-sorted list.
+  files() {
+    const mc = this.app.metadataCache;
+    const ignored = typeof mc.isUserIgnored === 'function' ? p => mc.isUserIgnored(p) : () => false;
+    return this.app.vault.getFiles()
+      .filter(f => !ignored(f.path))
+      .sort((a, b) => b.stat.mtime - a.stat.mtime);
+  }
+
+  getSuggestions(query) {
+    const files = this.files();
+    const q = query.trim();
+    if (!q) return files.map(file => ({ file, match: null }));
+
+    const fuzzy = prepareFuzzySearch(q);
+    const out = [];
+    for (const file of files) {
+      // match on the path so «Log/2026» narrows by folder too
+      if (!fuzzy(file.path.replace(/\.md$/, ''))) continue;
+      out.push({ file, match: fuzzy(file.basename) });
+    }
+    return out;
+  }
+
+  renderSuggestion(item, el) {
+    const content = el.createDiv({ cls: 'suggestion-content' });
+    const title = content.createDiv({ cls: 'suggestion-title' });
+    const name = item.file.extension === 'md' ? item.file.basename : item.file.name;
+    renderResults(title, name, item.match || { score: 0, matches: [] });
+
+    const dir = item.file.parent && item.file.parent.path !== '/' ? item.file.parent.path : '';
+    const when = moment(item.file.stat.mtime).format('YYYY-MM-DD HH:mm');
+    content.createDiv({ cls: 'suggestion-note', text: dir ? `${when} · ${dir}` : when });
+  }
+
+  onChooseSuggestion(item, evt) {
+    this.app.workspace.getLeaf(Keymap.isModEvent(evt)).openFile(item.file);
+  }
+}
+
 // ---- plugin ---------------------------------------------------------------
 
 module.exports = class TasksMoverPlugin extends Plugin {
@@ -285,6 +348,14 @@ module.exports = class TasksMoverPlugin extends Plugin {
       editorCallback: editor => {
         editor.replaceSelection(' ➕ ' + moment().format('YYYY-MM-DD'));
       },
+    });
+
+    this.addCommand({
+      id: 'open-recent-files',
+      name: 'Open file by modified time…',
+      icon: 'clock',
+      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'o' }],
+      callback: () => new RecentFilesModal(this.app).open(),
     });
 
     this.addCommand({
