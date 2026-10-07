@@ -1,7 +1,7 @@
 {
   "name": "obsidian-agent-workspace",
   "description": "Agent Workspace: task ladder in tasks.md, journal in Log/, notes in Notes/, weekly reports — as reusable skills for any coding agent.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "Stanislav Popov",
     "url": "https://github.com/popstas"

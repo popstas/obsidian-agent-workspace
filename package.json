@@ -1,6 +1,6 @@
 {
   "name": "obsidian-agent-workspace",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Agent Workspace: a personal workspace where an AI agent keeps your tasks, projects, notes and work log",
   "type": "module",
