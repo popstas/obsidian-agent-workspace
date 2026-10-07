@@ -421,7 +421,8 @@ Every skill is a slash command named after itself:
 * `/decompose` to break a large task into steps;
 * `/snoozed-task` and `/snoozed-review` to snooze a task and to go through the ones that came due;
 * `/weekly-report` and `/weekly-review` for the weekly report and the weekly review;
-* `/monthly-review` for the monthly review.
+* `/monthly-review` for the monthly review;
+* `/askme` to have the agent interview you about the open questions in its last answer.
 
 You don't have to know these names. An ordinary request is enough, and the agent picks the right instructions on its own:
 

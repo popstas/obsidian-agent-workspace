@@ -20,6 +20,7 @@
 - Отложенное: `snoozed-task`, `snoozed-review`
 - Ревью: `weekly-review` / `weekly-report`, `monthly-review`
 - Vault: `obsidian-vault`, `learn`
+- Диалог: `askme`
 - Из других проектов: `vault-connect` — записать факт, задачу или заметку в этот vault, не выходя из чужого репозитория; ставится копией в user scope агента, см. `INTEGRATION.md`
 - Разово: `demo-content-delete` — убирает демо-контент после адаптации vault, в конце удаляет сам себя. Не вызывай его повторно и не жди, что он останется в списке скиллов.
 

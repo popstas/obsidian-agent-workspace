@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { REPO, SKILLS_LIST, skillNames, frontmatter, renderSkillsList } from '../scripts/lib/repo.mjs';
 
 const EXPECTED = [
-  'close-task', 'decompose', 'demo-content-delete', 'first-task-do',
+  'askme', 'close-task', 'decompose', 'demo-content-delete', 'first-task-do',
   'learn', 'list-tasks', 'monthly-review', 'new-task', 'obsidian-vault',
   'snoozed-review', 'snoozed-task', 'task-prepare', 'vault-connect',
   'weekly-report', 'weekly-review', 'worklog',
