@@ -42,15 +42,21 @@ fi
 [[ -z "$BACKUP" ]] && BACKUP="$(mktemp -d)"
 mkdir -p "$BACKUP"
 
+# GNU and BSD date both support -r <file>
+mtime() { date -r "$1" '+%F %T'; }
+
 total=0
 for v in "${vaults[@]}"; do
   echo "######## vault: $v"
-  mapfile -d '' copies < <(find "$v" -path "$v/.git" -prune -o -name '*.sync-conflict-*' -type f -print0 | sort -z)
+  copies=()
+  while IFS= read -r -d '' f; do copies+=("$f"); done \
+    < <(find "$v" -path "$v/.git" -prune -o -name '*.sync-conflict-*' -type f -print0 | sort -z)
   markers=$(grep -rlE --include='*.md' --exclude-dir=.git '^(<<<<<<<|>>>>>>>) ' "$v" 2>/dev/null)
   [[ -n "$markers" ]] && { echo "git conflict markers in:"; echo "$markers" | sed 's/^/  /'; }
   if [[ ${#copies[@]} -eq 0 ]]; then echo "no conflict copies"; continue; fi
 
-  declare -A first_of=()
+  # sorted, so copies of one original are adjacent
+  prev_orig=""; prev_first=""
   for c in "${copies[@]}"; do
     total=$((total + 1))
     rel="${c#$v/}"
@@ -61,22 +67,21 @@ for v in "${vaults[@]}"; do
 
     echo
     echo "=== $rel"
-    echo "device: $dev | copy mtime: $(stat -c %y "$c" | cut -c1-19)"
+    echo "device: $dev | copy mtime: $(mtime "$c")"
     case "$rel" in .obsidian/*|*/.obsidian/*) echo "kind: obsidian-ui-state" ;; esac
     if [[ ! -f "$orig" ]]; then
       echo "verdict: ORIGINAL MISSING (${orig#$v/})"
       continue
     fi
-    echo "original mtime: $(stat -c %y "$orig" | cut -c1-19)"
+    echo "original mtime: $(mtime "$orig")"
     if cmp -s "$c" "$orig"; then echo "verdict: IDENTICAL to original"; continue; fi
-    if [[ -n "${first_of[$orig]:-}" ]] && cmp -s "$c" "${first_of[$orig]}"; then
-      echo "verdict: DUPLICATE of ${first_of[$orig]#$v/}"; continue
+    if [[ "$orig" == "$prev_orig" ]] && cmp -s "$c" "$prev_first"; then
+      echo "verdict: DUPLICATE of ${prev_first#$v/}"; continue
     fi
-    first_of[$orig]="$c"
+    prev_orig="$orig"; prev_first="$c"
     echo "verdict: DIFFERS (- original, + copy)"
     /usr/bin/diff -u "$orig" "$c" | tail -n +3 | head -n "$MAX_DIFF_LINES"
   done
-  unset first_of
 done
 
 echo
