@@ -8,7 +8,7 @@ import { REPO, SKILLS_LIST, skillNames, frontmatter, renderSkillsList } from '..
 const EXPECTED = [
   'askme', 'close-task', 'decompose', 'demo-content-delete', 'first-task-do',
   'learn', 'list-tasks', 'monthly-review', 'new-task', 'obsidian-vault',
-  'snoozed-review', 'snoozed-task', 'task-prepare', 'vault-connect',
+  'snoozed-review', 'snoozed-task', 'sync-conflicts', 'task-prepare', 'vault-connect',
   'weekly-report', 'weekly-review', 'worklog',
 ];
 

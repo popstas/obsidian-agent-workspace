@@ -8,6 +8,8 @@
 
 **Конвенции живут в скилле `obsidian-vault`** (`skills/obsidian-vault/SKILL.md`): таксономия каталогов, куда попадает какой тип заметки, правила wikilinks, работа с чувствительным содержимым, настройки Obsidian. Читай его перед созданием, переносом и переименованием заметок и не дублируй его правила здесь.
 
+**Перед доработками самой базы читай [CONTRIBUTING.md](CONTRIBUTING.md).** Доработки — это скиллы, скрипты, хуки, тесты, манифесты, README. В `CONTRIBUTING.md` описано, какие файлы генерируются, что после каких правок пересобирать и как прогнать тесты до коммита, а не узнать о падении из CI. В развёрнутом vault пользователя этого файла может не быть: его убирает `demo-content-delete`.
+
 ## Лестница задач
 
 Шесть файлов, между которыми задача остывает сверху вниз: `tasks.md` (`# Week:` и `# Week+`) → `tasks-future.md` → `ideas.md`, плюс `projects.md` для многошаговых результатов и `tasks-snoozed.md` для отложенного с датой активации `📅`. Регулярные дела — `tasks-recurring.md`. Подробности — в `obsidian-vault`.
@@ -19,7 +21,7 @@
 - Ежедневно: `new-task`, `close-task`, `worklog`, `task-prepare`, `first-task-do`, `list-tasks`, `decompose`
 - Отложенное: `snoozed-task`, `snoozed-review`
 - Ревью: `weekly-review` / `weekly-report`, `monthly-review`
-- Vault: `obsidian-vault`, `learn`
+- Vault: `obsidian-vault`, `learn`, `sync-conflicts` — разобрать конфликтные копии Syncthing с бэкапом
 - Диалог: `askme`
 - Из других проектов: `vault-connect` — записать факт, задачу или заметку в этот vault, не выходя из чужого репозитория; ставится копией в user scope агента, см. `INTEGRATION.md`
 - Разово: `demo-content-delete` — убирает демо-контент после адаптации vault, в конце удаляет сам себя. Не вызывай его повторно и не жди, что он останется в списке скиллов.
