@@ -13,6 +13,20 @@
   flex: 0 0 auto !important;   /* вместо flex: 1 1 0 — не растягивать по ширине контейнера */
 }
 
+/* Горизонтальный скролл вкладок колесом. В Obsidian 1.14 добавлено
+   `.mod-root .workspace-tabs:not(.mod-stacked) .workspace-tab-header-container-inner
+   { overflow: clip }` — штатно вкладки сжимаются и не переполняются, а наши
+   (flex: 0 0 auto) вылезают за край и обрезаются без возможности прокрутки.
+   Возвращаем прокрутку; колесо Obsidian сам переводит в scrollLeft.
+   padding-right: «уголок» вкладки (::after, ширина 2×--tab-curve, right: -2×curve)
+   у последней вкладки торчит за штатный padding 6px и даёт ~14px лишней
+   прокрутки, даже когда все вкладки помещаются. Отводим под него место. */
+.workspace-split.mod-root .workspace-tabs:not(.mod-stacked) .workspace-tab-header-container-inner {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  padding-right: calc(var(--tab-curve) * 2) !important;
+}
+
 .workspace-split.mod-root .workspace-tab-header-inner {
   position: relative !important; /* гарантируем поток, чтобы header видел контент */
   width: max-content !important;
