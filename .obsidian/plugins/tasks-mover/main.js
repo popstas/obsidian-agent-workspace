@@ -276,6 +276,52 @@ function foldDoneInWeek(editor) {
   return effects.length;
 }
 
+// ---- fold all lists ---------------------------------------------------------
+
+// Visual indent width of a line's leading whitespace (tab = 4 columns).
+function indentWidth(line) {
+  let w = 0;
+  for (const ch of line) {
+    if (ch === '\t') w += 4 - (w % 4);
+    else if (ch === ' ') w++;
+    else break;
+  }
+  return w;
+}
+
+// Like the core «Fold all headings and lists», but lists only: fold every list
+// item (any level) that has more-indented child lines; headings stay open.
+// Lines inside fenced code blocks are skipped.
+// Returns the number of items folded (-1 if the fold API is unavailable).
+function foldAllLists(editor) {
+  const cm = editor.cm;
+  if (!cm || !foldEffect) return foldEffect ? 0 : -1;
+
+  const total = editor.lineCount();
+  const effects = [];
+  let inFence = false;
+  for (let i = 0; i < total; i++) {
+    const line = editor.getLine(i);
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+    if (inFence || !LIST_RE.test(line)) continue;
+
+    const indent = indentWidth(line);
+    let end = i + 1;
+    while (end < total) {
+      const l = editor.getLine(end);
+      if (!l.trim() || indentWidth(l) <= indent) break;
+      end++;
+    }
+    if (end === i + 1) continue; // childless — nothing to fold
+    const lastChild = end - 1;
+    const from = editor.posToOffset({ line: i, ch: line.length });
+    const to = editor.posToOffset({ line: lastChild, ch: editor.getLine(lastChild).length });
+    effects.push(foldEffect.of({ from, to }));
+  }
+  if (effects.length) cm.dispatch({ effects });
+  return effects.length;
+}
+
 // ---- recent-files switcher -------------------------------------------------
 
 // Quick switcher clone that keeps the list in modified-time order: newest file
@@ -378,6 +424,18 @@ module.exports = class TasksMoverPlugin extends Plugin {
         const n = foldDoneInWeek(editor);
         if (n === -1) new Notice('Fold API unavailable (@codemirror/language)');
         else new Notice(n ? `Folded ${n} completed task(s)` : 'No completed tasks with children in # Week:');
+      },
+    });
+
+    this.addCommand({
+      id: 'fold-all-lists',
+      name: 'Fold all lists',
+      icon: 'list-collapse',
+      hotkeys: [{ modifiers: ['Alt', 'Mod', 'Shift'], key: '-' }],
+      editorCallback: editor => {
+        const n = foldAllLists(editor);
+        if (n === -1) new Notice('Fold API unavailable (@codemirror/language)');
+        else if (!n) new Notice('No list items with children');
       },
     });
 
