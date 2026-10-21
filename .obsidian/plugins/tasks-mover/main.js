@@ -400,7 +400,10 @@ module.exports = class TasksMoverPlugin extends Plugin {
       id: 'open-recent-files',
       name: 'Open file by modified time…',
       icon: 'clock',
-      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'o' }],
+      hotkeys: [
+        { modifiers: ['Mod', 'Shift'], key: 'o' },
+        { modifiers: ['Mod', 'Shift'], key: 'щ' },
+      ],
       callback: () => new RecentFilesModal(this.app).open(),
     });
 
