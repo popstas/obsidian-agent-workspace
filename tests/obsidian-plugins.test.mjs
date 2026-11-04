@@ -1,42 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { REPO } from '../scripts/lib/repo.mjs';
 import { startGithubStub } from './helpers/github-stub.mjs';
 import { BASH } from './helpers/bash.mjs';
+import { psRunners, execFileSyncRetry, spawnSyncRetry } from './helpers/powershell.mjs';
 
-// Два разных PowerShell-интерпретатора, оба реальные целевые среды:
-// pwsh — кросс-платформенный PowerShell 7+, есть на Linux/macOS и на обоих
-// раннерах CI; powershell — Windows PowerShell 5.1, то, что стоит на чистой
-// Windows "из коробки", pwsh на ней обычно нет. Раньше тесты хардкодили
-// только pwsh — 5.1-специфичный баг (см. тест на BOM ниже) не ловился ни
-// локально, ни в CI на windows-latest, потому что там тоже есть pwsh и
-// именно он использовался. Теперь гоняем через каждый интерпретатор, какой
-// реально найден в PATH; если не нашёлся ни один — соответствующие тесты
-// пропускаются с объяснением, а не падают.
-const PS_INTERPRETERS = [
-  { label: 'pwsh', cmd: 'pwsh' },
-  { label: 'Windows PowerShell 5.1', cmd: 'powershell' },
-];
-
-function hasInterpreter(cmd) {
-  try {
-    execFileSync(cmd, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const availablePs = PS_INTERPRETERS.filter((s) => hasInterpreter(s.cmd));
-// Пусто только когда в PATH нет вообще ни одного PowerShell — тогда один
-// плейсхолдер-раннер со skip и внятной причиной вместо падения тестов.
-const psRunners = availablePs.length > 0
-  ? availablePs
-  : [{ label: 'PowerShell', cmd: null, skip: 'ни pwsh, ни powershell (Windows PowerShell 5.1) не найдены в PATH' }];
+// Поиск pwsh и Windows PowerShell 5.1 и запуск с повтором при крахе
+// .NET-хоста — в tests/helpers/powershell.mjs. Раньше тесты хардкодили только
+// pwsh — 5.1-специфичный баг (см. тест на BOM ниже) не ловился ни локально, ни
+// в CI на windows-latest, потому что там тоже есть pwsh и именно он
+// использовался.
 
 const manifest = JSON.parse(readFileSync(join(REPO, 'obsidian-plugins.json'), 'utf8'));
 const community = JSON.parse(readFileSync(join(REPO, '.obsidian', 'community-plugins.json'), 'utf8'));
@@ -240,7 +217,7 @@ test('bash сравнивает версии покомпонентно', () => 
 
 for (const ps of psRunners) {
   const skip = ps.skip || false;
-  const runPs = (args) => execFileSync(ps.cmd, ['-NoProfile', '-File',
+  const runPs = (args) => execFileSyncRetry(ps.cmd, ['-NoProfile', '-File',
     join(REPO, 'scripts', 'install-obsidian-plugins.ps1'), ...args], { encoding: 'utf8' });
 
   test(`PowerShell-установщик (${ps.label}) разбирает манифест так же, как JSON.parse`, { skip }, () => {
@@ -248,7 +225,7 @@ for (const ps of psRunners) {
   });
 
   test(`PowerShell (${ps.label}) сравнивает версии покомпонентно`, { skip }, () => {
-    const out = execFileSync(ps.cmd, ['-NoProfile', '-Command',
+    const out = execFileSyncRetry(ps.cmd, ['-NoProfile', '-Command',
       `. '${join(REPO, 'scripts', 'install-obsidian-plugins.ps1')}';` +
       `@('0.9.0|0.10.0','0.10.0|0.9.0','1.2.3|1.2.3','8.3|8.3.0','8.4|8.3.9') | ` +
       `ForEach-Object { $p = $_ -split '\\|'; Compare-PluginVersion $p[0] $p[1] }`],
@@ -320,7 +297,7 @@ async function inSandbox(runner, stubOpts, body, plugins = DEFAULT_PLUGINS, buil
     const script = join(sandbox, 'scripts', runner.script);
     copyFileSync(join(REPO, 'scripts', runner.script), script);
     const env = { ...process.env, OAB_GITHUB_API: stub.api, OAB_GITHUB_DOWNLOAD: stub.download };
-    const run = (extra = []) => execFileSync(runner.cmd, [...runner.args, script, ...extra], {
+    const run = (extra = []) => execFileSyncRetry(runner.cmd, [...runner.args, script, ...extra], {
       encoding: 'utf8', stdio: 'pipe', env,
     });
     // execFileSync отдаёт stderr только когда процесс падает (через
@@ -330,7 +307,7 @@ async function inSandbox(runner, stubOpts, body, plugins = DEFAULT_PLUGINS, buil
     // отдельный помощник на spawnSync, который отдаёт stdout/stderr/status
     // независимо от того, упал процесс или нет.
     const runCapture = (extra = []) => {
-      const r = spawnSync(runner.cmd, [...runner.args, script, ...extra], { encoding: 'utf8', env });
+      const r = spawnSyncRetry(runner.cmd, [...runner.args, script, ...extra], { encoding: 'utf8', env });
       return { stdout: r.stdout, stderr: r.stderr, status: r.status };
     };
     body({ sandbox, run, runCapture });

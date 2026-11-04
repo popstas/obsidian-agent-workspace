@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO } from '../scripts/lib/repo.mjs';
 import { BASH } from './helpers/bash.mjs';
+import { psRunners, execFileSyncRetry } from './helpers/powershell.mjs';
 
 test('tasks-startup печатает вложенный путь лога', () => {
   const out = execFileSync(process.execPath, [join(REPO, '.claude', 'hooks', 'tasks-startup.mjs')], { encoding: 'utf8' });
@@ -65,27 +66,8 @@ test('codex-хук на bash и Claude-хук на Node печатают оди�
   assert.deepStrictEqual(JSON.parse(sh).hookSpecificOutput, JSON.parse(mjs).hookSpecificOutput);
 });
 
-// Два разных PowerShell-интерпретатора, оба реальные целевые среды — тот же
-// подход, что в tests/obsidian-plugins.test.mjs: pwsh хардкодить нельзя,
-// на чистой Windows есть только powershell (Windows PowerShell 5.1).
-const PS_INTERPRETERS = [
-  { label: 'pwsh', cmd: 'pwsh' },
-  { label: 'Windows PowerShell 5.1', cmd: 'powershell' },
-];
-
-function hasInterpreter(cmd) {
-  try {
-    execFileSync(cmd, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const availablePs = PS_INTERPRETERS.filter((s) => hasInterpreter(s.cmd));
-const psRunners = availablePs.length > 0
-  ? availablePs
-  : [{ label: 'PowerShell', cmd: null, skip: 'ни pwsh, ни powershell (Windows PowerShell 5.1) не найдены в PATH' }];
+// Поиск PowerShell и запуск с повтором при крахе .NET-хоста — в
+// tests/helpers/powershell.mjs, общем с tests/obsidian-plugins.test.mjs.
 
 // Кириллическая подстрока, которую ищем в сырых байтах вывода. Если вывод
 // ушёл не в UTF-8 (например, в CP866 на Windows PowerShell 5.1), этих байтов
@@ -119,7 +101,7 @@ for (const ps of psRunners) {
   // при идентичном содержимом.
   test(`codex-хук на PowerShell (${ps.label}) печатает тот же объект, что и bash-версия`, { skip }, () => {
     const sh = execFileSync(BASH, [join(REPO, '.codex', 'hooks', 'tasks-startup.sh')], { encoding: 'utf8' });
-    const out = execFileSync(ps.cmd, ['-NoProfile', '-File',
+    const out = execFileSyncRetry(ps.cmd, ['-NoProfile', '-File',
       join(REPO, '.codex', 'hooks', 'tasks-startup.ps1')], { encoding: 'utf8' });
     assert.deepStrictEqual(
       JSON.parse(out.replace(/\r\n/g, '\n')).hookSpecificOutput,
@@ -129,7 +111,7 @@ for (const ps of psRunners) {
   // Кодировка — отдельная проверка от содержательного паритета выше: именно
   // она ловит регресс [Console]::OutputEncoding, который JSON.parse не ловит.
   test(`codex-хук на PowerShell (${ps.label}) пишет UTF-8, а не что-то ещё`, { skip }, () => {
-    const raw = execFileSync(ps.cmd, ['-NoProfile', '-File',
+    const raw = execFileSyncRetry(ps.cmd, ['-NoProfile', '-File',
       join(REPO, '.codex', 'hooks', 'tasks-startup.ps1')]);
     assertUtf8Output(raw, `PowerShell (${ps.label})`);
   });
