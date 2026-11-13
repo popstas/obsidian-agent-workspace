@@ -242,13 +242,10 @@ async function moveBlock(plugin, editor, srcFile, block, targetPath, positionKey
 
 // ---- fold completed tasks --------------------------------------------------
 
-// Fold the children of every top-level completed (`- [x]`) task inside the
-// `# Week:` section, mirroring how Obsidian folds a list item by hand.
-// Returns the number of tasks folded (-1 if the fold API is unavailable).
-function foldDoneInWeek(editor) {
-  const cm = editor.cm;
-  if (!cm || !foldEffect) return foldEffect ? 0 : -1;
-
+// Every top-level completed (`- [x]`) task with children inside the `# Week:`
+// section: [{ text, from, to }], where from..to is the foldable range (end of
+// the task line → end of its last child), as Obsidian folds a list item by hand.
+function doneBlocksInWeek(editor) {
   const total = editor.lineCount();
   let weekHdr = -1, weekPlusHdr = -1;
   for (let i = 0; i < total; i++) {
@@ -256,24 +253,54 @@ function foldDoneInWeek(editor) {
     if (weekHdr === -1 && l === '# Week:') weekHdr = i;
     else if (l === '# Week+') { weekPlusHdr = i; break; }
   }
-  if (weekHdr === -1) return 0;
+  if (weekHdr === -1) return [];
   const scopeTo = weekPlusHdr === -1 ? total : weekPlusHdr;
 
-  const effects = [];
+  const blocks = [];
   for (let i = weekHdr + 1; i < scopeTo; i++) {
-    if (!DONE_RE.test(editor.getLine(i))) continue;
+    const text = editor.getLine(i);
+    if (!DONE_RE.test(text)) continue;
     // walk down over the task's indented children
     let end = i + 1;
     while (end < scopeTo && CHILD_RE.test(editor.getLine(end))) end++;
     if (end === i + 1) continue; // childless — nothing to fold
     const lastChild = end - 1;
-    const from = editor.posToOffset({ line: i, ch: editor.getLine(i).length });
-    const to = editor.posToOffset({ line: lastChild, ch: editor.getLine(lastChild).length });
-    effects.push(foldEffect.of({ from, to }));
+    blocks.push({
+      text,
+      from: editor.posToOffset({ line: i, ch: text.length }),
+      to: editor.posToOffset({ line: lastChild, ch: editor.getLine(lastChild).length }),
+    });
     i = end - 1; // skip past the children we just consumed
   }
-  if (effects.length) cm.dispatch({ effects });
-  return effects.length;
+  return blocks;
+}
+
+function dispatchFolds(editor, blocks) {
+  if (blocks.length) editor.cm.dispatch({ effects: blocks.map(b => foldEffect.of({ from: b.from, to: b.to })) });
+  return blocks.length;
+}
+
+// Fold the children of every completed task in `# Week:`.
+// Returns the number of tasks folded (-1 if the fold API is unavailable).
+function foldDoneInWeek(editor) {
+  if (!editor.cm || !foldEffect) return foldEffect ? 0 : -1;
+  return dispatchFolds(editor, doneBlocksInWeek(editor));
+}
+
+// Fold only the tasks that became completed (or gained children) since the
+// previous call for this editor — `seen` holds the done-task lines it saw last
+// time. A task the user unfolded by hand stays open until its line changes.
+// A block holding the caret is skipped, so typing a child under a done task
+// does not fold the line being edited.
+function foldNewlyDone(editor, seen) {
+  if (!editor.cm || !foldEffect) return;
+  const blocks = doneBlocksInWeek(editor);
+  const prev = seen.get(editor.cm);
+  seen.set(editor.cm, new Set(blocks.map(b => b.text)));
+  if (!prev) return; // no baseline yet: file-open has already folded everything
+
+  const head = editor.posToOffset(editor.getCursor());
+  dispatchFolds(editor, blocks.filter(b => !prev.has(b.text) && !(head > b.from && head <= b.to)));
 }
 
 // ---- fold all lists ---------------------------------------------------------
@@ -448,9 +475,42 @@ module.exports = class TasksMoverPlugin extends Plugin {
       // defer so the editor is mounted and Obsidian's own fold-restore has run
       window.setTimeout(() => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (view && view.file === file && view.editor) foldDoneInWeek(view.editor);
+        if (!view || view.file !== file || !view.editor) return;
+        foldDoneInWeek(view.editor);
+        foldNewlyDone(view.editor, this.seenDone); // baseline for later changes
       }, 100);
     }));
+
+    // Auto-fold a task the moment it is completed: by a checkbox click or edit
+    // in this editor (`editor-change`), or by an agent rewriting tasks.md on
+    // disk (`modify` — Obsidian then reloads the open editor). Debounced per
+    // editor, so a burst of edits is one pass over the final text.
+    this.seenDone = new WeakMap();   // EditorView → Set of done-task lines
+    const timers = new WeakMap();    // EditorView → pending timeout id
+    const schedule = editor => {
+      const cm = editor && editor.cm;
+      if (!cm) return;
+      window.clearTimeout(timers.get(cm));
+      timers.set(cm, window.setTimeout(() => foldNewlyDone(editor, this.seenDone), 400));
+    };
+    this.registerEvent(this.app.workspace.on('editor-change', (editor, info) => {
+      if (info && info.file && info.file.name === 'tasks.md') schedule(editor);
+    }));
+    this.registerEvent(this.app.vault.on('modify', file => {
+      if (file.name !== 'tasks.md') return;
+      for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+        if (leaf.view.file === file) schedule(leaf.view.editor);
+      }
+    }));
+    // tasks.md already open when the plugin loads: fold and take the baseline
+    this.app.workspace.onLayoutReady(() => {
+      for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+        const view = leaf.view;
+        if (!view.file || view.file.name !== 'tasks.md' || !view.editor) continue;
+        foldDoneInWeek(view.editor);
+        foldNewlyDone(view.editor, this.seenDone);
+      }
+    });
 
     this.addCommand({
       id: 'split-task-tail-to-child',
