@@ -266,3 +266,18 @@ test('справка по хоткеям описывает все назнач�
   }
   assert.deepEqual(missing, [], `хоткеи не описаны в ${notes[0]}`);
 });
+
+// Хук .githooks/pre-commit пересобирает производные файлы и гоняет тесты до
+// коммита, но включается локальной настройкой, которая не переживает clone.
+// Четыре из шести красных прогонов CI с июля по ноябрь 2026 — забытая
+// пересборка (Skills list, EXPECTED, хэши demo-manifest) с машины, где хук
+// был выключен. В CI и вне git-рабочей копии проверять нечего.
+test('pre-commit хук включён (локально)', t => {
+  if (process.env.CI) return t.skip('в CI хуки не нужны');
+  if (!existsSync(join(REPO, '.git'))) return t.skip('не git-рабочая копия');
+  let hooksPath = '';
+  try {
+    hooksPath = execFileSync('git', ['config', 'core.hooksPath'], { cwd: REPO, encoding: 'utf8' }).trim();
+  } catch { /* не задан — git config выходит с кодом 1 */ }
+  assert.equal(hooksPath, '.githooks', 'хук pre-commit выключен — включи: git config core.hooksPath .githooks');
+});

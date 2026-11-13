@@ -19,6 +19,10 @@ jobs:
         # исполнялся на macOS ни разу.
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Обычный прогон — пара минут на любой ОС. Зависший процесс (pwsh, сетевой
+    # стаб) без лимита держал бы раннер до дефолтных шести часов. Ожидание
+    # раннера в очереди сюда не входит — его разруливает rerun-unacquired.yml.
+    timeout-minutes: 15
     env:
       # На macOS-раннере GitHub в PATH первым стоит Homebrew-bash 5.x, а
       # проверять нужно системный /bin/bash 3.2 — голый "bash" молча гонял бы

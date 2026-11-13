@@ -1,0 +1,31 @@
+name: rerun-unacquired
+
+# macOS arm64-раннеров у GitHub иногда не хватает: джоб висит в очереди
+# ~15 минут и отменяется с «The job was not acquired by Runner of type hosted
+# even after multiple attempts» — ни одного шага, тесты не запускались вовсе.
+# Такой прогон красный не из-за кода, поэтому перезапускаем его сами. Признак —
+# пустой runner_name: джоб, упавший на тестах, всегда получал раннер, и его этот
+# workflow не трогает. Не больше двух повторов на прогон.
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  rerun:
+    if: github.event.workflow_run.conclusion != 'success' && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          n=$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --jq '[.jobs[] | select(.conclusion == "cancelled" or .conclusion == "failure") | select((.runner_name // "") == "")] | length')
+          echo "джобов без раннера: $n"
+          if [ "$n" -gt 0 ]; then
+            gh run rerun "$RUN" --failed --repo "$REPO"
+          fi

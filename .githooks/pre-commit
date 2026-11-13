@@ -1,13 +1,32 @@
 #!/bin/sh
-# Держит skills/Skills list.md в актуальном виде и не пускает коммит с
-# красным тестом (включая guard приватности). Включается один раз:
+# Пересобирает производные файлы, которые закреплены тестами, и не пускает
+# коммит с красным тестом (включая guard приватности). Включается один раз:
 #   git config core.hooksPath .githooks
 # Это локальная настройка машины — она не приезжает через clone, поэтому
 # основная гарантия всё равно CI: она регенерирует список и гоняет тесты
-# сама, падая, если что-то разошлось.
+# сама, падая, если что-то разошлось. Что хук выключен, ловит локальный
+# тест «pre-commit хук включён».
 set -e
-if git diff --cached --name-only | grep -q '^skills/.*/SKILL\.md$'; then
+staged=$(git diff --cached --name-only)
+
+if printf '%s\n' "$staged" | grep -q '^skills/.*/SKILL\.md$'; then
   node scripts/gen-skills-list.mjs
   git add "skills/Skills list.md"
 fi
+
+# Хэши demoFiles/setupDocs (README, INTEGRATION.md, CONTRIBUTING.md, демо-логи)
+# пересчитываются, только если один из этих файлов в коммите: генератор
+# хэширует рабочее дерево, и непроиндексированная правка README не должна
+# протечь в demo-manifest.json чужого коммита.
+if printf '%s\n' "$staged" | node -e '
+  const fs = require("fs");
+  const m = JSON.parse(fs.readFileSync("demo-manifest.json", "utf8"));
+  const pinned = new Set([...m.demoFiles, ...m.setupDocs].map(e => e.path));
+  const staged = fs.readFileSync(0, "utf8").split("\n");
+  process.exit(staged.some(p => pinned.has(p)) ? 0 : 1);
+'; then
+  node scripts/gen-demo-manifest.mjs > /dev/null
+  git add demo-manifest.json
+fi
+
 npm test
