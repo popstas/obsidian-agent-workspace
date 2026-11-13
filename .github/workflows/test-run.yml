@@ -1,0 +1,58 @@
+name: test-run
+
+# Общие шаги прогона тестов; вызывается из test.yml (ubuntu, windows) и
+# test-macos.yml (macOS). Список ОС — JSON-массив во входе os.
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+
+jobs:
+  test:
+    strategy:
+      # Ноги независимы: красный windows не должен отменять ubuntu —
+      # результаты всех ОС в этот момент нужны целиком.
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    runs-on: ${{ matrix.os }}
+    # Обычный прогон — пара минут на любой ОС. Зависший процесс (pwsh, сетевой
+    # стаб) без лимита держал бы раннер до дефолтных шести часов. Ожидание
+    # раннера в очереди сюда не входит — его разруливает rerun-unacquired.yml.
+    timeout-minutes: 15
+    env:
+      # На macOS-раннере GitHub в PATH первым стоит Homebrew-bash 5.x, а
+      # проверять нужно системный /bin/bash 3.2 — голый "bash" молча гонял бы
+      # тесты не по той реализации и давал бы зелёный тик, не доказывающий
+      # ничего (та же ловушка, что на Windows, где "bash" из PATH разрешался
+      # в WSL вместо Git Bash). Тесты берут этот путь из OAB_BASH и на
+      # PATH-bash при ошибке не откатываются.
+      OAB_BASH: ${{ matrix.os == 'macos-latest' && '/bin/bash' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # pwsh предустановлен на всех трёх раннерах (ubuntu-latest,
+      # windows-latest, macos-latest). Если этот шаг однажды упадёт — значит
+      # PowerShell-тесты в npm test перестали выполняться и молча
+      # пропускаются, а не что pwsh не нужен.
+      - run: pwsh --version
+      # Какой именно bash исполняет .sh — в логе прогона отдельной строкой.
+      # Без неё зелёный тик на macOS невозможно отличить от "гоняли Homebrew
+      # 5.x"; та же информация дублируется диагностикой теста "bash-раннер
+      # тестов" внутри npm test.
+      - name: bash runner
+        shell: bash
+        run: |
+          echo "OAB_BASH=$OAB_BASH"
+          "$OAB_BASH" --version
+      - run: npm test
+      # Хуки не переживают clone, поэтому актуальность Skills list.md
+      # гарантируется именно здесь.
+      - name: Skills list.md is up to date
+        run: |
+          npm run gen:skills-list
+          git diff --exit-code -- "skills/Skills list.md"

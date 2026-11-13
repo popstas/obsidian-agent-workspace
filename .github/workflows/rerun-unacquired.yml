@@ -8,7 +8,7 @@ name: rerun-unacquired
 # workflow не трогает. Не больше двух повторов на прогон.
 on:
   workflow_run:
-    workflows: [test]
+    workflows: [test, test-macos]
     types: [completed]
 
 permissions:

@@ -1,0 +1,30 @@
+name: test-macos
+
+# macos-latest — основная целевая ОС проекта: системный bash 3.2 и BSD-userland
+# (sed, grep, mktemp) ведут себя не так, как GNU на ubuntu. Поэтому нога нужна,
+# но только когда меняется то, что исполняет bash: .sh-скрипты, манифест,
+# который разбирает bash-установщик, тесты и сами workflow. Ручной запуск —
+# workflow_dispatch (gh workflow run test-macos.yml).
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.sh'
+      - 'obsidian-plugins.json'
+      - 'tests/**'
+      - '.github/workflows/test-macos.yml'
+      - '.github/workflows/test-run.yml'
+  pull_request:
+    paths:
+      - '**/*.sh'
+      - 'obsidian-plugins.json'
+      - 'tests/**'
+      - '.github/workflows/test-macos.yml'
+      - '.github/workflows/test-run.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/test-run.yml
+    with:
+      os: '["macos-latest"]'
