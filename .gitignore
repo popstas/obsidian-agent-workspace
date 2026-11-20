@@ -18,6 +18,8 @@ files/tasks.json
 # Свой tasks-mover — исключение, он вендорится.
 .obsidian/plugins/*
 !.obsidian/plugins/tasks-mover/
+# Настройки tasks-mover (URL открытия сессии) — свои у каждого vault.
+.obsidian/plugins/tasks-mover/data.json
 
 # У двух плагинов vault владеет не кодом, а настройками: file-explorer-plus
 # убирает из дерева файлов служебное (AGENTS.md, CHANGELOG, CONTRIBUTING,
