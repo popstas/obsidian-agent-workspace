@@ -3,6 +3,7 @@
 const {
   Plugin, Notice, Menu, MarkdownView, moment,
   SuggestModal, Keymap, prepareFuzzySearch, renderResults,
+  PluginSettingTab, Setting, requestUrl, editorLivePreviewField,
 } = require('obsidian');
 
 // CodeMirror's fold effect — Obsidian provides @codemirror/* to plugins as
@@ -10,6 +11,14 @@ const {
 // breaking the whole plugin load.
 let foldEffect = null;
 try { foldEffect = require('@codemirror/language').foldEffect; } catch (e) { /* noop */ }
+let cmView = null;
+try { cmView = require('@codemirror/view'); } catch (e) { /* noop */ }
+let cmState = null;
+try { cmState = require('@codemirror/state'); } catch (e) { /* noop */ }
+
+const DEFAULT_SETTINGS = {
+  sessionOpenUrl: 'http://127.0.0.1:9722/claude-wt/session-open',
+};
 
 const FILES = ['tasks.md', 'projects.md', 'tasks-future.md', 'tasks-snoozed.md', 'tasks-recurring.md', 'ideas.md'];
 const TASK_RE = /^- \[.\] /;      // top-level task line (indent 0)
@@ -409,10 +418,201 @@ class RecentFilesModal extends SuggestModal {
   }
 }
 
+// ---- open a Claude Code session from `- Сессия <имя>` ----------------------
+
+// A list item `<indent>- Сессия <name> …` (written by the sess2task skill).
+// The name is the first token after «Сессия»; for `<uuid> (title)` that is
+// the uuid. Returns { name, from, to } — the name's char range in the line —
+// or null when the line is not such an item.
+const SESSION_RE = /^([ \t]*[-*+][ \t]+Сессия[ \t]+)(\S+)/;
+function parseSessionLine(line) {
+  const m = SESSION_RE.exec(line);
+  if (!m) return null;
+  return { name: m[2], from: m[1].length, to: m[1].length + m[2].length };
+}
+
+// Same rule for the rendered text of a list item (reading mode): the item's
+// own text starts with «Сессия <name>». Returns { name, from, to } or null.
+const SESSION_TEXT_RE = /^([ \t]*Сессия[ \t]+)(\S+)/;
+function parseSessionText(text) {
+  const m = SESSION_TEXT_RE.exec(text);
+  if (!m) return null;
+  return { name: m[2], from: m[1].length, to: m[1].length + m[2].length };
+}
+
+const SESSION_LINK_CLS = 'tasks-mover-session-link';
+
+async function openSession(plugin, name) {
+  const url = (plugin.settings.sessionOpenUrl || '').trim() || DEFAULT_SETTINGS.sessionOpenUrl;
+  try {
+    // requestUrl, not fetch: the w11m endpoint answers no CORS preflight
+    const res = await requestUrl({
+      url,
+      method: 'POST',
+      contentType: 'application/json',
+      body: JSON.stringify({ id: name, action: 'terminal' }),
+      throw: false,
+    });
+    if (res.status === 200) { new Notice(`Opening ${name}`); return; }
+    let msg = '';
+    try { msg = (res.json && res.json.error) || ''; } catch (e) { /* not json */ }
+    if (!msg) { try { msg = (res.text || '').slice(0, 200); } catch (e) { /* noop */ } }
+    new Notice(`Open session ${name} failed: HTTP ${res.status}${msg ? ` — ${msg}` : ''}`, 8000);
+  } catch (e) {
+    new Notice(`Open session ${name} failed: ${(e && e.message) || e}`, 8000);
+  }
+}
+
+// Live Preview / source mode: mark the name as a link, open on click.
+// Live Preview opens on a plain click (like a rendered link); source mode
+// keeps a plain click for the caret and opens on Ctrl/Cmd+click.
+function sessionEditorExtension(plugin) {
+  if (!cmView || !cmState) return [];
+  const { ViewPlugin, Decoration, EditorView } = cmView;
+  const mark = Decoration.mark({
+    class: `external-link ${SESSION_LINK_CLS}`,
+    attributes: {
+      style: 'cursor: pointer; color: var(--link-external-color)',
+      title: 'Open Claude Code session',
+    },
+  });
+
+  const build = view => {
+    const builder = new cmState.RangeSetBuilder();
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = view.state.doc.lineAt(pos);
+        const s = parseSessionLine(line.text);
+        if (s) builder.add(line.from + s.from, line.from + s.to, mark);
+        pos = line.to + 1;
+      }
+    }
+    return builder.finish();
+  };
+
+  const viewPlugin = ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = build(view); }
+    update(u) { if (u.docChanged || u.viewportChanged) this.decorations = build(u.view); }
+  }, { decorations: v => v.decorations });
+
+  const clicks = EditorView.domEventHandlers({
+    mousedown(evt, view) {
+      if (evt.button !== 0) return false;
+      const el = evt.target instanceof Element ? evt.target.closest(`.${SESSION_LINK_CLS}`) : null;
+      if (!el) return false;
+      const live = editorLivePreviewField ? view.state.field(editorLivePreviewField, false) : true;
+      if (!live && !Keymap.isModEvent(evt)) return false;
+
+      const pos = view.posAtDOM(el);
+      const s = parseSessionLine(view.state.doc.lineAt(pos).text);
+      if (!s) return false;
+      evt.preventDefault();
+      openSession(plugin, s.name);
+      return true;
+    },
+  });
+
+  // high precedence so Obsidian's own link/caret mousedown can't swallow it
+  return [viewPlugin, cmState.Prec ? cmState.Prec.high(clicks) : clicks];
+}
+
+// Reading mode: wrap the name of every `Сессия <name>` list item in a link.
+function sessionPostProcessor(plugin) {
+  return el => {
+    for (const li of el.querySelectorAll('li')) {
+      // the item's own first non-blank text node: skip Obsidian's bullet /
+      // collapse-indicator elements, descend into a loose-list <p>, stop at a
+      // nested list or any other inline element (the item text starts there)
+      const firstText = host => {
+        for (const n of host.childNodes) {
+          if (n.nodeType === 3) { if (n.textContent.trim()) return { host, node: n }; continue; }
+          if (n.nodeType !== 1) continue;
+          if (n.tagName === 'P') return firstText(n);
+          if (n.tagName === 'UL' || n.tagName === 'OL') return null;
+          if (n.tagName === 'DIV' || (n.tagName === 'SPAN' && !n.textContent.trim())) continue;
+          return null;
+        }
+        return null;
+      };
+      const found = firstText(li);
+      if (!found) continue;
+      const { host, node } = found;
+      const s = parseSessionText(node.textContent);
+      if (!s) continue;
+
+      const text = node.textContent;
+      const a = document.createElement('a');
+      a.className = `external-link ${SESSION_LINK_CLS}`;
+      a.textContent = s.name;
+      a.title = 'Open Claude Code session';
+      a.style.cursor = 'pointer';
+      a.addEventListener('click', evt => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openSession(plugin, s.name);
+      });
+      host.insertBefore(document.createTextNode(text.slice(0, s.from)), node);
+      host.insertBefore(a, node);
+      node.textContent = text.slice(s.to);
+    }
+  };
+}
+
+class TasksMoverSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    new Setting(containerEl)
+      .setName('Session open URL')
+      .setDesc('POST {"id": "<name>", "action": "terminal"} here when a «Сессия <name>» line is clicked.')
+      .addText(t => t
+        .setPlaceholder(DEFAULT_SETTINGS.sessionOpenUrl)
+        .setValue(this.plugin.settings.sessionOpenUrl)
+        .onChange(async v => {
+          this.plugin.settings.sessionOpenUrl = v.trim() || DEFAULT_SETTINGS.sessionOpenUrl;
+          await this.plugin.saveData(this.plugin.settings);
+        }));
+  }
+}
+
 // ---- plugin ---------------------------------------------------------------
 
 module.exports = class TasksMoverPlugin extends Plugin {
-  onload() {
+  async onload() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.addSettingTab(new TasksMoverSettingTab(this.app, this));
+
+    this.registerEditorExtension(sessionEditorExtension(this));
+    this.registerMarkdownPostProcessor(sessionPostProcessor(this));
+
+    this.addCommand({
+      id: 'open-session-on-line',
+      name: 'Open session on this line',
+      icon: 'terminal',
+      editorCheckCallback: (checking, editor) => {
+        const s = parseSessionLine(editor.getLine(editor.getCursor().line));
+        if (!s) return false;
+        if (!checking) openSession(this, s.name);
+        return true;
+      },
+    });
+
+    this.registerEvent(this.app.workspace.on('editor-menu', (menu, editor) => {
+      const s = parseSessionLine(editor.getLine(editor.getCursor().line));
+      if (!s) return;
+      menu.addItem(item => {
+        item.setTitle(`Open session ${s.name}`);
+        item.setIcon('terminal');
+        item.onClick(() => openSession(this, s.name));
+      });
+    }));
+
     this.addCommand({
       id: 'insert-created-date',
       name: 'Insert created date ( ➕ YYYY-MM-DD )',
@@ -588,3 +788,7 @@ module.exports = class TasksMoverPlugin extends Plugin {
     }));
   }
 };
+
+// pure helpers, exposed for tests (tests/tasks-mover.test.mjs)
+module.exports.parseSessionLine = parseSessionLine;
+module.exports.parseSessionText = parseSessionText;
